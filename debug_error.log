@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "<string>", line 6, in <module>
+    exec(code)
+    ~~~~^^^^^^
+  File "<string>", line 1154, in <module>
+  File "<string>", line 1049, in main
+  File "<string>", line 592, in prepare_data
+  File "C:\Users\parra\AppData\Roaming\Python\Python313\site-packages\sklearn\utils\_set_output.py", line 316, in wrapped
+    data_to_wrap = f(self, X, *args, **kwargs)
+  File "C:\Users\parra\AppData\Roaming\Python\Python313\site-packages\sklearn\base.py", line 894, in fit_transform
+    return self.fit(X, **fit_params).transform(X)
+           ~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\parra\AppData\Roaming\Python\Python313\site-packages\sklearn\preprocessing\_data.py", line 454, in fit
+    return self.partial_fit(X, y)
+           ~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\parra\AppData\Roaming\Python\Python313\site-packages\sklearn\base.py", line 1365, in wrapper
+    return fit_method(estimator, *args, **kwargs)
+  File "C:\Users\parra\AppData\Roaming\Python\Python313\site-packages\sklearn\preprocessing\_data.py", line 494, in partial_fit
+    X = validate_data(
+        self,
+    ...<3 lines>...
+        ensure_all_finite="allow-nan",
+    )
+  File "C:\Users\parra\AppData\Roaming\Python\Python313\site-packages\sklearn\utils\validation.py", line 2954, in validate_data
+    out = check_array(X, input_name="X", **check_params)
+  File "C:\Users\parra\AppData\Roaming\Python\Python313\site-packages\sklearn\utils\validation.py", line 1128, in check_array
+    raise ValueError(
+    ...<3 lines>...
+    )
+ValueError: Found array with 0 sample(s) (shape=(0, 88)) while a minimum of 1 is required by MinMaxScaler.

@@ -1,0 +1,18 @@
+# Advanced Stock Predictor - Dependencies
+numpy
+pandas
+matplotlib
+seaborn
+scipy
+scikit-learn
+xgboost
+lightgbm
+tensorflow
+yfinance
+PyWavelets
+requests
+beautifulsoup4
+vaderSentiment
+textblob
+feedparser
+optuna
