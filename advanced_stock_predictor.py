@@ -65,20 +65,20 @@ try:
 except ImportError: HAS_LGBM = False
 
 # ━━━━━━━━  CONFIGURATION  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TICKER = "UNITEDPOLY.NS"
-TICKER_NAME = "United Polyfab"
-START_DATE     = "2022-01-01"
-SEQ_LEN        = 60
+TICKER         = "HINDUNILVR.NS"
+TICKER_NAME    = "Hindustan Unilever"
+START_DATE     = "2020-01-01"
+SEQ_LEN        = 30
 EPOCHS         = 30
 BATCH_SIZE     = 64
 PATIENCE       = 10
 LR             = 0.0005
 MODEL_DIR      = "models"
 # Intermarket (Indian context)
-BENCH_TICKER = "UNITEDPOLY.NS"
-VIX_TICKER = "UNITEDPOLY.NS"
-USDINR_TICKER = "UNITEDPOLY.NS"
-GOLD_TICKER = "UNITEDPOLY.NS"
+BENCH_TICKER = "^NSEI"
+VIX_TICKER = "^INDIAVIX"
+USDINR_TICKER = "USDINR=X"
+GOLD_TICKER = "GC=F"
 # Sentiment
 REDDIT_SUBS    = ["IndianStockMarket", "IndianStreetBets"]
 # Chart pattern params
@@ -597,6 +597,12 @@ def prepare_data(df, feature_cols, seq_len, target='Close'):
     target_scaler = MinMaxScaler(feature_range=(-1, 1))
     scaled_target = target_scaler.fit_transform(target_diffs.reshape(-1, 1)).flatten()
 
+    # Auto-adjust sequence length if data is too short
+    if len(scaled) <= seq_len + 10:
+        old_seq = seq_len
+        seq_len = max(5, len(scaled) // 3)
+        P(f"  ⚠ Only {len(scaled)} rows — reducing SEQ_LEN from {old_seq} to {seq_len}")
+
     # Build sequences
     X, y, prev_prices = [], [], []
     for i in range(seq_len, len(scaled)):
@@ -638,7 +644,8 @@ def prepare_data(df, feature_cols, seq_len, target='Close'):
         'X_te': X_te, 'y_te': y_te, 'prev_te': prev_te,
         'X_tr_xgb': X_tr_xgb, 'X_va_xgb': X_va_xgb, 'X_te_xgb': X_te_xgb,
         'scaler': scaler, 'target_scaler': target_scaler,
-        'n_feat': n_feat, 'feature_cols': feature_cols, 'target_idx': target_idx
+        'n_feat': n_feat, 'feature_cols': feature_cols, 'target_idx': target_idx,
+        'seq_len': seq_len
     }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -900,7 +907,7 @@ def plot_all(histories, model_results, ensemble_preds, ensemble_actuals,
     closes = df['Close'].values
     ax7.plot(dates, closes, lw=1.2, c='#90CAF9', alpha=0.6, label='Historical')
     test_n = len(ensemble_preds)
-    test_dates = dates[-test_n - SEQ_LEN:][-test_n:]
+    test_dates = dates[-test_n - min(SEQ_LEN, len(dates) - test_n):][-test_n:]
     if len(test_dates) == len(ensemble_preds):
         ax7.plot(test_dates, ensemble_preds, lw=2, c='#E53935', label='Ensemble Prediction')
     # Next day marker
@@ -914,7 +921,7 @@ def plot_all(histories, model_results, ensemble_preds, ensemble_actuals,
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     save_path = os.path.join(MODEL_DIR, f'{TICKER.replace(".", "_")}_results.png')
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show() # Automatically showing graphs is enabled
+    # plt.show() # Automatically showing graphs is enabled
     P(f"  ✓ Saved → {save_path}")
 
     # --- Sentiment Dashboard ---
@@ -941,7 +948,7 @@ def plot_all(histories, model_results, ensemble_preds, ensemble_actuals,
         plt.tight_layout()
         sent_path = os.path.join(MODEL_DIR, f'{TICKER.replace(".", "_")}_sentiment.png')
         plt.savefig(sent_path, dpi=150, bbox_inches='tight')
-        plt.show() # Automatically showing graphs is enabled
+        # plt.show() # Automatically showing graphs is enabled
         P(f"  ✓ Saved → {sent_path}")
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -954,9 +961,10 @@ def predict_next_day(models, xgb_model, meta_learner, df, data_dict, sentiment_d
     target_scaler = data_dict['target_scaler']
     feature_cols = data_dict['feature_cols']
 
-    recent = df[feature_cols].values[-SEQ_LEN:]
+    actual_seq_len = data_dict.get('seq_len', SEQ_LEN)
+    recent = df[feature_cols].values[-actual_seq_len:]
     recent_scaled = scaler.transform(recent)
-    X_seq = recent_scaled.reshape(1, SEQ_LEN, len(feature_cols))
+    X_seq = recent_scaled.reshape(1, actual_seq_len, len(feature_cols))
 
     # Individual predictions
     preds = []
@@ -993,18 +1001,32 @@ def predict_next_day(models, xgb_model, meta_learner, df, data_dict, sentiment_d
 
     change_pct_adj = (pred_price_adj - last_close) / last_close * 100
 
-    # Trading signal
+    # Trading signal — Weighted scoring system
     model_dirs = [1 if p > data_dict['y_te'][-1] else -1 for p in preds]
     agreement = sum(model_dirs) / len(model_dirs)
     
+    # Bullish score: combine model agreement + predicted change direction
+    bull_score = (agreement * 50) + (change_pct_adj * 30)  # weighted composite
+    
     allocate_pct = 0
-    if agreement > 0.3 and change_pct_adj > 0.3:
+    if agreement > 0.3 and change_pct_adj > 0.15:
+        signal = "🟢 STRONG BUY"
+        confidence = min(abs(agreement) * 100 + (change_pct_adj * 15), 95)
+        allocate_pct = int(min(confidence, 80))
+    elif agreement > 0.0 and change_pct_adj > 0.0:
         signal = "🟢 BUY"
-        confidence = min(abs(agreement) * 100 + (change_pct_adj * 10), 95)
-        allocate_pct = int(min(confidence, 80))  # Max 80% allocation
-    elif agreement < -0.3 and change_pct_adj < -0.3:
+        confidence = min(abs(agreement) * 70 + (change_pct_adj * 20), 85)
+        allocate_pct = int(min(confidence, 60))
+    elif agreement > 0.3 and change_pct_adj > -0.15:
+        signal = "🟢 BUY"
+        confidence = min(abs(agreement) * 60, 75)
+        allocate_pct = int(min(confidence, 50))
+    elif agreement < -0.3 and change_pct_adj < -0.15:
         signal = "🔴 SELL"
-        confidence = min(abs(agreement) * 100 + abs(change_pct_adj * 10), 95)
+        confidence = min(abs(agreement) * 100 + abs(change_pct_adj * 15), 95)
+    elif agreement < 0.0 and change_pct_adj < -0.2:
+        signal = "🔴 SELL"
+        confidence = min(abs(agreement) * 70 + abs(change_pct_adj * 20), 85)
     else:
         signal = "🟡 HOLD"
         confidence = (1 - abs(agreement)) * 60
@@ -1012,9 +1034,15 @@ def predict_next_day(models, xgb_model, meta_learner, df, data_dict, sentiment_d
     allocation_str = f"Invest {allocate_pct}% (${10.0 * (allocate_pct/100.0):.2f} of your $10)" if allocate_pct > 0 else "Do not allocate new capital."
 
     # --- 20-DAY SWING TRADE TARGET & STOP LOSS ---
-    recent_highs = df['High'].values[-20:]
-    recent_lows = df['Low'].values[-20:]
-    recent_closes = df['Close'].values[-21:-1]
+    lookback = min(20, len(df) - 1)
+    recent_highs = df['High'].values[-lookback:]
+    recent_lows = df['Low'].values[-lookback:]
+    recent_closes = df['Close'].values[-(lookback+1):-1]
+    # Ensure matching sizes
+    min_len = min(len(recent_highs), len(recent_lows), len(recent_closes))
+    recent_highs = recent_highs[-min_len:]
+    recent_lows = recent_lows[-min_len:]
+    recent_closes = recent_closes[-min_len:]
     
     tr1 = recent_highs - recent_lows
     tr2 = np.abs(recent_highs - recent_closes)
@@ -1085,9 +1113,10 @@ def main():
     # 3) Prepare data
     data = prepare_data(df, feature_cols, SEQ_LEN)
 
-    # 4) Build models
-    lstm_model = build_attention_lstm(SEQ_LEN, data['n_feat'], LR)
-    transformer_model = build_transformer(SEQ_LEN, data['n_feat'], LR)
+    # 4) Build models (use dynamic seq_len for short-history stocks)
+    actual_seq_len = data.get('seq_len', SEQ_LEN)
+    lstm_model = build_attention_lstm(actual_seq_len, data['n_feat'], LR)
+    transformer_model = build_transformer(actual_seq_len, data['n_feat'], LR)
 
     # 5) Train deep learning models
     hist_lstm = train_dl_model(lstm_model, data['X_tr'], data['y_tr'],
